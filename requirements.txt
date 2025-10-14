@@ -1,0 +1,18 @@
+# Core framework
+Django>=5.0,<6.0
+
+# Web server (for production hosting)
+gunicorn
+
+# Static files management (for serving static files on production)
+whitenoise
+
+# Database (SQLite by default, but psycopg2 for PostgreSQL if needed)
+# Uncomment below line if you use PostgreSQL
+# psycopg2-binary
+
+# Environment variables support (optional but useful)
+python-dotenv
+
+# For security / performance improvements
+tzdata

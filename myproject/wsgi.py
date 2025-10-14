@@ -1,16 +1,12 @@
-"""
-WSGI config for myproject project.
-
-It exposes the WSGI callable as a module-level variable named ``application``.
-
-For more information on this file, see
-https://docs.djangoproject.com/en/5.2/howto/deployment/wsgi/
-"""
-
 import os
+import sys
+
+# Project root directory (manage.py যেখানে আছে)
+project_home = '/home/yourusername/myapp'
+if project_home not in sys.path:
+    sys.path.insert(0, project_home)
+
+os.environ['DJANGO_SETTINGS_MODULE'] = 'myapp.settings'
 
 from django.core.wsgi import get_wsgi_application
-
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myproject.settings')
-
 application = get_wsgi_application()
