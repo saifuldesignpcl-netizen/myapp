@@ -1,4 +1,3 @@
-ECHO is on.
 # Python compiled files
 *.pyc
 __pycache__/
@@ -23,5 +22,6 @@ ENV/
 # Static files collected
 /staticfiles/
 
-# Others
+# OS files
 .DS_Store
+Thumbs.db
