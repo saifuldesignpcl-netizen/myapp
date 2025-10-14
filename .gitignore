@@ -1,0 +1,27 @@
+ECHO is on.
+# Python compiled files
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+
+# Django stuff
+*.sqlite3
+db.sqlite3
+*.log
+
+# Environment
+venv/
+env/
+ENV/
+*.env
+
+# IDEs
+.vscode/
+.idea/
+
+# Static files collected
+/staticfiles/
+
+# Others
+.DS_Store
