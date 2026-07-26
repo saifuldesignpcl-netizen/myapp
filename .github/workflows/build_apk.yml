@@ -44,4 +44,4 @@ jobs:
         if: always()
         with:
           name: flet-android-app
-          path: build/apk/*.apk
+          path: "**/build/apk/*.apk"
