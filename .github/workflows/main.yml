@@ -33,14 +33,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install flet
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Build APK
+      - name: Create Flet APK
         run: |
-          flet build apk
+          flet build apk --verbose
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: flet-android-app
           path: build/apk/*.apk
