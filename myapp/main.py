@@ -8,7 +8,13 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors as pdf_colors
 
-MASTER_DATA_FILENAME = "cable_master.xlsx"
+# --- File Path Resolver for Android & PC ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# First check inside assets folder, if not present check root directory
+MASTER_DATA_FILENAME = os.path.join(BASE_DIR, "assets", "cable_master.xlsx")
+if not os.path.exists(MASTER_DATA_FILENAME):
+    MASTER_DATA_FILENAME = os.path.join(BASE_DIR, "cable_master.xlsx")
+
 COLOR_OPTIONS = ["Red", "Black", "Yellow", "Blue", "Green", "Gray", "White"]
 UNIT_OPTIONS = ["Coil", "Meter"]
 COIL_MULTIPLIER = 100
@@ -28,7 +34,6 @@ DEFAULT_TERMS = [
 def clean_str(val):
     if val is None:
         return ""
-    # Non-breaking space (\xa0) এবং অতিরিক্ত স্পেস রিমুভ করার জন্য
     txt = str(val).replace('\xa0', ' ')
     return re.sub(r'\s+', ' ', txt).strip()
 
@@ -85,40 +90,43 @@ class MasterData:
     def load(self, path):
         if not os.path.exists(path):
             return
-        wb = openpyxl.load_workbook(path, data_only=True)
-        ws = wb.active
+        try:
+            wb = openpyxl.load_workbook(path, data_only=True)
+            ws = wb.active
 
-        header_row = [clean_str(c.value) for c in next(ws.iter_rows(min_row=1, max_row=1))]
-        col_index = {}
-        for field, aliases in self.COLUMN_ALIASES.items():
-            for i, h in enumerate(header_row):
-                if h.lower() in aliases:
-                    col_index[field] = i
-                    break
+            header_row = [clean_str(c.value) for c in next(ws.iter_rows(min_row=1, max_row=1))]
+            col_index = {}
+            for field, aliases in self.COLUMN_ALIASES.items():
+                for i, h in enumerate(header_row):
+                    if h.lower() in aliases:
+                        col_index[field] = i
+                        break
 
-        if "type" not in col_index or "size" not in col_index:
-            return
+            if "type" not in col_index or "size" not in col_index:
+                return
 
-        rows = []
-        for r in ws.iter_rows(min_row=2, values_only=True):
-            def get(field, default=""):
-                idx = col_index.get(field)
-                if idx is None or idx >= len(r) or r[idx] is None:
-                    return default
-                return r[idx]
+            rows = []
+            for r in ws.iter_rows(min_row=2, values_only=True):
+                def get(field, default=""):
+                    idx = col_index.get(field)
+                    if idx is None or idx >= len(r) or r[idx] is None:
+                        return default
+                    return r[idx]
 
-            t = clean_str(get("type"))
-            s = clean_str(get("size"))
-            if not t and not s:
-                continue
-            try:
-                p = float(get("price", 0))
-            except (TypeError, ValueError):
-                p = 0.0
+                t = clean_str(get("type"))
+                s = clean_str(get("size"))
+                if not t and not s:
+                    continue
+                try:
+                    p = float(get("price", 0))
+                except (TypeError, ValueError):
+                    p = 0.0
 
-            rows.append({"type": t, "size": s, "price": p})
+                rows.append({"type": t, "size": s, "price": p})
 
-        self.rows = rows
+            self.rows = rows
+        except Exception as e:
+            print(f"Error loading Excel data: {e}")
 
     def unique(self, field):
         return sorted(list({row[field] for row in self.rows if row[field]}))
@@ -319,7 +327,6 @@ def main(page: ft.Page):
     def update_sizes_for_selected_type(selected_type):
         sizes = master.sizes_for_type(selected_type)
 
-        # অপশন ক্লিয়ার করে নতুন অপশন সেট করা
         size_dropdown.options.clear()
         for s in sizes:
             size_dropdown.options.append(ft.dropdown.Option(key=s, text=s))
@@ -330,7 +337,7 @@ def main(page: ft.Page):
             size_dropdown.value = None
 
         update_price()
-        page.update()  # পুরো পেজ আপডেট দিয়ে UI সিঙ্ক নিশ্চিত করা হলো
+        page.update()
 
     def on_type_change(e):
         selected_type = e.control.value
@@ -350,13 +357,9 @@ def main(page: ft.Page):
                 price_field.value = f"{base_price[0]:.2f}"
             page.update()
 
-    # Flet's Dropdown widget renamed its "value picked" event from
-    # on_change to on_select in recent versions (TextField still uses
-    # on_change, unaffected) - using on_change here silently did nothing,
-    # which is why choosing a Type/Size/Unit never updated anything.
-    type_dropdown.on_select = on_type_change
-    size_dropdown.on_select = on_size_change
-    unit_dropdown.on_select = on_unit_change
+    type_dropdown.on_change = on_type_change
+    size_dropdown.on_change = on_size_change
+    unit_dropdown.on_change = on_unit_change
     discount_field.on_change = lambda e: recalc()
 
     def refresh_items_table():
@@ -406,9 +409,6 @@ def main(page: ft.Page):
         page.update()
 
     def show_snack(text):
-        # page.open(snack) doesn't exist in this Flet version - the
-        # correct pattern is: add the SnackBar to page.overlay, set its
-        # own .open flag, then page.update().
         snack = ft.SnackBar(ft.Text(text))
         page.overlay.append(snack)
         snack.open = True
@@ -551,4 +551,4 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.run(main)
+    ft.app(target=main, assets_dir="assets")
