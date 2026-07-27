@@ -1,47 +1,51 @@
-name: Build Flet Android APK
+name: Build Android APK
 
 on:
   push:
     branches:
-      - main
-  workflow_dispatch: # এটি আপনাকে ম্যানুয়ালি ক্লিক করে APK বিল্ড করার সুবিধা দেবে
+      - main  # আপনার প্রধান ব্রাঞ্চের নাম (main/master)
+  workflow_dispatch:  # ম্যানুয়ালি বিল্ড ট্রিপ করার সুবিধা
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      # ১. কোড চেকআউট করা
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Java Development Kit (JDK)
+      # ২. পাইথন সেটআপ
+      - name: Set up Python
+        uses: actions/python-12@v5
+        with:
+          python-version: "3.11"
+
+      # ৩. জাভা সেটআপ (Flet Android Build-এর জন্য প্রয়োজনীয়)
+      - name: Set up Java JDK
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.22.x' # সাম্প্রতিক Flutter ভার্সন
-          channel: 'stable'
+      # ৪. এন্ড্রয়েড SDK সেটআপ
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
+      # ৫. প্রজেক্টের ডিপেন্ডেন্সি ইনস্টল
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flet openpyxl reportlab
+          pip install flet[all] openpyxl reportlab
 
-      - name: Build APK with Flet
+      # ৬. ফ্লেট অ্যাপের অ্যান্ড্রয়েড প্রোজেক্ট ক্লিন ও বিল্ড
+      - name: Build APK
         run: |
-          flet build apk
+          flet build apk --verbose
 
-      - name: Upload APK Artifact
+      # ৭. তৈরি হওয়া APK আর্টিফ্যাক্ট হিসেবে আপলোড করা
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Cable-Quotation-App-APK
+          name: CableQuotationApp-Build-${{ github.run_number }}
           path: build/apk/*.apk
