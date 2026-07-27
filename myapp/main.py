@@ -1,5 +1,6 @@
 import flet as ft
 from datetime import date
+import itertools
 import openpyxl
 import os
 import re
@@ -225,14 +226,18 @@ def main(page: ft.Page):
     # --- Inputs ---
     company_name = ft.TextField(label="Company Name", value="ELCO WIRES AND CABLES LIMITED", dense=True)
     company_addr = ft.TextField(label="Company Address", value="102, Shukrabad, Mirpur Road, Dhaka", dense=True)
-    ref_no = ft.TextField(label="Reference No", value=f"QT/{date.today().strftime('%d%m%Y')}", dense=True)
-    doc_date = ft.TextField(label="Date", value=date.today().strftime('%d/%m/%Y'), dense=True)
+    # expand=True added below - without it, on a narrow (mobile) screen this
+    # Row doesn't wrap, so the second field (doc_date) gets pushed off the
+    # right edge of the screen and becomes invisible/unreachable.
+    ref_no = ft.TextField(label="Reference No", value=f"QT/{date.today().strftime('%d%m%Y')}", dense=True, expand=True)
+    doc_date = ft.TextField(label="Date", value=date.today().strftime('%d/%m/%Y'), dense=True, expand=True)
     client_name = ft.TextField(label="Client Name", value="Client Company Limited", dense=True)
     client_addr = ft.TextField(label="Client Address", value="Client Address", dense=True)
     subject_line = ft.TextField(label="Subject", value="Price Offer for Electrical Cables.", dense=True)
 
     # Dropdowns Setup
     types_list = master.unique("type")
+    _size_dropdown_key_seq = itertools.count()
 
     type_dropdown = ft.Dropdown(
         label="Type",
@@ -242,6 +247,7 @@ def main(page: ft.Page):
     )
     size_dropdown = ft.Dropdown(
         label="Size",
+        key="size-dd-init",
         options=[],
         dense=True,
         expand=True
@@ -327,14 +333,23 @@ def main(page: ft.Page):
     def update_sizes_for_selected_type(selected_type):
         sizes = master.sizes_for_type(selected_type)
 
-        size_dropdown.options.clear()
-        for s in sizes:
-            size_dropdown.options.append(ft.dropdown.Option(key=s, text=s))
+        # Layered fixes for the "Flutter dropdown popup shows stale
+        # items" bug (exact trigger varies by Flet version, so all
+        # three are applied together):
+        # 1. Reassign a NEW list (in-place clear()/append() doesn't
+        #    notify Flet that 'options' changed).
+        # 2. Give the control a fresh 'key' so Flutter treats it as a
+        #    new widget instead of patching the old one.
+        # 3. Briefly disable/re-enable the control - another known
+        #    trick that forces Flutter to rebuild its internal state.
+        size_dropdown.options = [ft.dropdown.Option(key=s, text=s) for s in sizes]
+        size_dropdown.value = sizes[0] if sizes else None
+        size_dropdown.key = f"size-dd-{next(_size_dropdown_key_seq)}"
 
-        if sizes:
-            size_dropdown.value = sizes[0]
-        else:
-            size_dropdown.value = None
+        size_dropdown.disabled = True
+        size_dropdown.update()
+        size_dropdown.disabled = False
+        size_dropdown.update()
 
         update_price()
         page.update()
