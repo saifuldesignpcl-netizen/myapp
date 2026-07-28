@@ -1,6 +1,5 @@
 import flet as ft
 from datetime import date
-import itertools
 import openpyxl
 import os
 import re
@@ -90,7 +89,7 @@ class MasterData:
 
     def load(self, path):
         if not os.path.exists(path):
-            return
+            return f"Master data file not found: {path}"
         try:
             wb = openpyxl.load_workbook(path, data_only=True)
             ws = wb.active
@@ -104,7 +103,8 @@ class MasterData:
                         break
 
             if "type" not in col_index or "size" not in col_index:
-                return
+                return (f"Couldn't find 'Type'/'Size' columns in {os.path.basename(path)}. "
+                        f"Header row found: {header_row}")
 
             rows = []
             for r in ws.iter_rows(min_row=2, values_only=True):
@@ -126,8 +126,11 @@ class MasterData:
                 rows.append({"type": t, "size": s, "price": p})
 
             self.rows = rows
+            if not rows:
+                return f"{os.path.basename(path)} was read but contained no usable rows."
+            return None
         except Exception as e:
-            print(f"Error loading Excel data: {e}")
+            return f"Error loading Excel data: {e}"
 
     def unique(self, field):
         return sorted(list({row[field] for row in self.rows if row[field]}))
@@ -217,27 +220,29 @@ def main(page: ft.Page):
     page.padding = 16
 
     master = MasterData()
-    master.load(MASTER_DATA_FILENAME)
+    load_error = master.load(MASTER_DATA_FILENAME)
 
     items = []
     terms = [list(t) for t in DEFAULT_TERMS]
     base_price = [None]
 
+    def show_snack(text):
+        snack = ft.SnackBar(ft.Text(text))
+        page.overlay.append(snack)
+        snack.open = True
+        page.update()
+
     # --- Inputs ---
     company_name = ft.TextField(label="Company Name", value="ELCO WIRES AND CABLES LIMITED", dense=True)
     company_addr = ft.TextField(label="Company Address", value="102, Shukrabad, Mirpur Road, Dhaka", dense=True)
-    # expand=True added below - without it, on a narrow (mobile) screen this
-    # Row doesn't wrap, so the second field (doc_date) gets pushed off the
-    # right edge of the screen and becomes invisible/unreachable.
-    ref_no = ft.TextField(label="Reference No", value=f"QT/{date.today().strftime('%d%m%Y')}", dense=True, expand=True)
-    doc_date = ft.TextField(label="Date", value=date.today().strftime('%d/%m/%Y'), dense=True, expand=True)
+    ref_no = ft.TextField(label="Reference No", value=f"QT/{date.today().strftime('%d%m%Y')}", dense=True)
+    doc_date = ft.TextField(label="Date", value=date.today().strftime('%d/%m/%Y'), dense=True)
     client_name = ft.TextField(label="Client Name", value="Client Company Limited", dense=True)
     client_addr = ft.TextField(label="Client Address", value="Client Address", dense=True)
     subject_line = ft.TextField(label="Subject", value="Price Offer for Electrical Cables.", dense=True)
 
     # Dropdowns Setup
     types_list = master.unique("type")
-    _size_dropdown_key_seq = itertools.count()
 
     type_dropdown = ft.Dropdown(
         label="Type",
@@ -247,7 +252,6 @@ def main(page: ft.Page):
     )
     size_dropdown = ft.Dropdown(
         label="Size",
-        key="size-dd-init",
         options=[],
         dense=True,
         expand=True
@@ -333,23 +337,14 @@ def main(page: ft.Page):
     def update_sizes_for_selected_type(selected_type):
         sizes = master.sizes_for_type(selected_type)
 
-        # Layered fixes for the "Flutter dropdown popup shows stale
-        # items" bug (exact trigger varies by Flet version, so all
-        # three are applied together):
-        # 1. Reassign a NEW list (in-place clear()/append() doesn't
-        #    notify Flet that 'options' changed).
-        # 2. Give the control a fresh 'key' so Flutter treats it as a
-        #    new widget instead of patching the old one.
-        # 3. Briefly disable/re-enable the control - another known
-        #    trick that forces Flutter to rebuild its internal state.
-        size_dropdown.options = [ft.dropdown.Option(key=s, text=s) for s in sizes]
-        size_dropdown.value = sizes[0] if sizes else None
-        size_dropdown.key = f"size-dd-{next(_size_dropdown_key_seq)}"
+        size_dropdown.options.clear()
+        for s in sizes:
+            size_dropdown.options.append(ft.dropdown.Option(key=s, text=s))
 
-        size_dropdown.disabled = True
-        size_dropdown.update()
-        size_dropdown.disabled = False
-        size_dropdown.update()
+        if sizes:
+            size_dropdown.value = sizes[0]
+        else:
+            size_dropdown.value = None
 
         update_price()
         page.update()
@@ -372,9 +367,13 @@ def main(page: ft.Page):
                 price_field.value = f"{base_price[0]:.2f}"
             page.update()
 
-    type_dropdown.on_change = on_type_change
-    size_dropdown.on_change = on_size_change
-    unit_dropdown.on_change = on_unit_change
+    # Flet's Dropdown widget fires on_select when a value is picked, NOT
+    # on_change (that's only for TextField/etc). Setting .on_change on a
+    # Dropdown doesn't error - it just silently does nothing - which is
+    # exactly why choosing a Type never updated Size/Price.
+    type_dropdown.on_select = on_type_change
+    size_dropdown.on_select = on_size_change
+    unit_dropdown.on_select = on_unit_change
     discount_field.on_change = lambda e: recalc()
 
     def refresh_items_table():
@@ -423,12 +422,6 @@ def main(page: ft.Page):
             )
         page.update()
 
-    def show_snack(text):
-        snack = ft.SnackBar(ft.Text(text))
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
-
     def add_item_click(e):
         if not type_dropdown.value or not size_dropdown.value:
             show_snack("Please select Type and Size!")
@@ -469,10 +462,14 @@ def main(page: ft.Page):
             disc_pct = float(discount_field.value or 0)
             grand = max(net - (net * disc_pct / 100.0), 0.0)
 
-            output_pdf = "Cable_Quotation.pdf"
+            # A bare relative filename saves wherever the current working
+            # directory happens to be at launch - not always predictable,
+            # especially on Android. Save next to this script instead and
+            # show the full path so there's no doubt where it landed.
+            output_pdf = os.path.join(BASE_DIR, "Cable_Quotation.pdf")
             generate_pdf(output_pdf, info, items, grand, words_text.value, terms)
 
-            show_snack(f"PDF Exported Successfully as '{output_pdf}'!")
+            show_snack(f"PDF saved: {output_pdf}")
         except Exception as ex:
             show_snack(f"Error generating PDF: {str(ex)}")
 
@@ -563,6 +560,9 @@ def main(page: ft.Page):
         update_sizes_for_selected_type(types_list[0])
 
     refresh_terms_table()
+
+    if load_error:
+        show_snack(f"⚠ {load_error}")
 
 
 if __name__ == "__main__":
