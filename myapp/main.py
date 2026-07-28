@@ -523,7 +523,7 @@ def main(page: ft.Page):
                     bgcolor=ft.Colors.RED_800,
                     padding=12,
                     border_radius=8,
-                    margin=ft.padding.only(top=25, bottom=5) # Fixed: margin using ft.padding.only
+                    margin=ft.Margin(left=0, top=25, right=0, bottom=5) # Safe Margin object
                 ),
                 ft.Card(
                     content=ft.Container(
@@ -594,7 +594,7 @@ def main(page: ft.Page):
                         height=50,
                         on_click=export_pdf_click
                     ),
-                    padding=ft.padding.only(top=10, bottom=20), # Fixed: padding using ft.padding.only
+                    padding=ft.Padding(left=0, top=10, right=0, bottom=20), # Safe Padding object
                     alignment=ft.Alignment(0, 0)
                 )
             ])
