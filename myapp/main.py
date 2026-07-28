@@ -150,7 +150,7 @@ class MasterData:
                 return row["price"]
         return None
 
-# --- Custom PDF Generator according to attached design ---
+# --- PDF Generator ---
 def generate_pdf(filename, info, items, net_total, discount_pct, discount_val, grand_total, in_words, terms):
     doc = SimpleDocTemplate(filename, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     story = []
@@ -246,7 +246,7 @@ def generate_pdf(filename, info, items, net_total, discount_pct, discount_val, g
     story.append(terms_table)
     story.append(Spacer(1, 15))
 
-    # Footer Signature / Address Block
+    # Footer
     story.append(Paragraph("Thanks & Best Regards,<br/><b>For ELCO WIRES AND CABLES LIMITED</b>", normal_style))
     story.append(Spacer(1, 15))
     
@@ -278,7 +278,6 @@ def main(page: ft.Page):
     company_name = ft.TextField(label="Company Name", value="ELCO WIRES AND CABLES LIMITED", dense=True)
     company_addr = ft.TextField(label="Company Address", value="102, Shukrabad, Mirpur Road, Dhaka", dense=True)
     
-    # Date field right side-a and Reference width fixed
     ref_no = ft.TextField(label="Reference No", value=f"QT/{date.today().strftime('%d%m%Y')}", dense=True, width=170)
     doc_date = ft.TextField(label="Date", value=date.today().strftime('%d/%m/%Y'), dense=True, width=150)
     
@@ -502,7 +501,6 @@ def main(page: ft.Page):
             disc_val = net * (disc_pct / 100.0)
             grand = max(net - disc_val, 0.0)
 
-            # Export directly to Android Download directory if available
             download_dir = "/storage/emulated/0/Download"
             if not os.path.exists(download_dir):
                 download_dir = BASE_DIR
@@ -514,7 +512,7 @@ def main(page: ft.Page):
         except Exception as ex:
             show_snack(f"Error generating PDF: {str(ex)}")
 
-    # --- UI Layout (With Top Margin for Notch/Header visibility) ---
+    # --- UI Layout ---
     page.add(
         ft.Container(
             content=ft.Column([
@@ -525,7 +523,7 @@ def main(page: ft.Page):
                     bgcolor=ft.Colors.RED_800,
                     padding=12,
                     border_radius=8,
-                    margin=ft.margin.only(top=25, bottom=5)  # Top spacing so mobile status items stay visible
+                    margin=ft.padding.only(top=25, bottom=5) # Fixed: margin using ft.padding.only
                 ),
                 ft.Card(
                     content=ft.Container(
@@ -533,7 +531,7 @@ def main(page: ft.Page):
                             ft.Text("Quotation Info", size=16, weight=ft.FontWeight.BOLD),
                             company_name,
                             company_addr,
-                            ft.Row([ref_no, doc_date], alignment=ft.MainAxisAlignment.BETWEEN), # Reference and Date aligned properly
+                            ft.Row([ref_no, doc_date], alignment=ft.MainAxisAlignment.BETWEEN),
                             client_name,
                             client_addr,
                             subject_line
@@ -596,7 +594,7 @@ def main(page: ft.Page):
                         height=50,
                         on_click=export_pdf_click
                     ),
-                    padding=ft.Padding.only(top=10, bottom=20),
+                    padding=ft.padding.only(top=10, bottom=20), # Fixed: padding using ft.padding.only
                     alignment=ft.Alignment(0, 0)
                 )
             ])
