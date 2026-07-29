@@ -531,7 +531,7 @@ def main(page: ft.Page):
                             ft.Text("Quotation Info", size=16, weight=ft.FontWeight.BOLD),
                             company_name,
                             company_addr,
-                            ft.Row([ref_no, doc_date], alignment=ft.MainAxisAlignment.BETWEEN),
+                            ft.Row([ref_no, doc_date], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                             client_name,
                             client_addr,
                             subject_line
