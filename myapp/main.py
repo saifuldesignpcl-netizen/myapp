@@ -642,4 +642,4 @@ def main(page: ft.Page):
         show_snack(f"⚠ {load_error}")
 
 if __name__ == "__main__":
-    ft.app(target=main, assets_dir="assets")
+    ft.run(main=main, assets_dir="assets")
