@@ -8,30 +8,30 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors as pdf_colors
 
-MASTER_DATA_FILENAME = "cable_master.xlsx"
+# --- File Path Resolver for Android & PC ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MASTER_DATA_FILENAME = os.path.join(BASE_DIR, "assets", "cable_master.xlsx")
+if not os.path.exists(MASTER_DATA_FILENAME):
+    MASTER_DATA_FILENAME = os.path.join(BASE_DIR, "cable_master.xlsx")
+
 COLOR_OPTIONS = ["Red", "Black", "Yellow", "Blue", "Green", "Gray", "White"]
 UNIT_OPTIONS = ["Coil", "Meter"]
 COIL_MULTIPLIER = 100
 
 DEFAULT_TERMS = [
-    ["Delivery",
-     "Delivery will be made to your project site at our cost within 7 working days from the receiving of your work order."],
+    ["Delivery", "Delivery will be made to your project site at our cost within 7 working days from the receiving of your work order."],
     ["Payment", "100% advanced with work order by DD / P.O / Cheque / Cash / EFT in favor of the company."],
     ["Offer Validity", "15 (Fifteen) working days from the date of issue of this offer."],
     ["Quality Inspection", "Pre-shipment inspection is the final inspection for quality and any technical argument."],
     ["Tolerance", "(+/-) 2% should be allowed."],
-    ["Mode of Modification",
-     "Purchase order once received will be treated as firm and final. No deviation accepted after PO."],
+    ["Mode of Modification", "Purchase order once received will be treated as firm and final. No deviation accepted after PO."],
 ]
-
 
 def clean_str(val):
     if val is None:
         return ""
-    # Non-breaking space (\xa0) এবং অতিরিক্ত স্পেস রিমুভ করার জন্য
     txt = str(val).replace('\xa0', ' ')
     return re.sub(r'\s+', ' ', txt).strip()
-
 
 def number_to_words(num: float) -> str:
     num = int(round(num))
@@ -69,8 +69,7 @@ def number_to_words(num: float) -> str:
     if rest:
         parts.append(three_digit(rest))
 
-    return " ".join(parts) + " Taka Only"
-
+    return "BDT- " + " ".join(parts) + " Taka Only"
 
 class MasterData:
     COLUMN_ALIASES = {
@@ -84,41 +83,48 @@ class MasterData:
 
     def load(self, path):
         if not os.path.exists(path):
-            return
-        wb = openpyxl.load_workbook(path, data_only=True)
-        ws = wb.active
+            return f"Master data file not found: {path}"
+        try:
+            wb = openpyxl.load_workbook(path, data_only=True)
+            ws = wb.active
 
-        header_row = [clean_str(c.value) for c in next(ws.iter_rows(min_row=1, max_row=1))]
-        col_index = {}
-        for field, aliases in self.COLUMN_ALIASES.items():
-            for i, h in enumerate(header_row):
-                if h.lower() in aliases:
-                    col_index[field] = i
-                    break
+            header_row = [clean_str(c.value) for c in next(ws.iter_rows(min_row=1, max_row=1))]
+            col_index = {}
+            for field, aliases in self.COLUMN_ALIASES.items():
+                for i, h in enumerate(header_row):
+                    if h.lower() in aliases:
+                        col_index[field] = i
+                        break
 
-        if "type" not in col_index or "size" not in col_index:
-            return
+            if "type" not in col_index or "size" not in col_index:
+                return (f"Couldn't find 'Type'/'Size' columns in {os.path.basename(path)}. "
+                        f"Header row found: {header_row}")
 
-        rows = []
-        for r in ws.iter_rows(min_row=2, values_only=True):
-            def get(field, default=""):
-                idx = col_index.get(field)
-                if idx is None or idx >= len(r) or r[idx] is None:
-                    return default
-                return r[idx]
+            rows = []
+            for r in ws.iter_rows(min_row=2, values_only=True):
+                def get(field, default=""):
+                    idx = col_index.get(field)
+                    if idx is None or idx >= len(r) or r[idx] is None:
+                        return default
+                    return r[idx]
 
-            t = clean_str(get("type"))
-            s = clean_str(get("size"))
-            if not t and not s:
-                continue
-            try:
-                p = float(get("price", 0))
-            except (TypeError, ValueError):
-                p = 0.0
+                t = clean_str(get("type"))
+                s = clean_str(get("size"))
+                if not t and not s:
+                    continue
+                try:
+                    p = float(get("price", 0))
+                except (TypeError, ValueError):
+                    p = 0.0
 
-            rows.append({"type": t, "size": s, "price": p})
+                rows.append({"type": t, "size": s, "price": p})
 
-        self.rows = rows
+            self.rows = rows
+            if not rows:
+                return f"{os.path.basename(path)} was read but contained no usable rows."
+            return None
+        except Exception as e:
+            return f"Error loading Excel data: {e}"
 
     def unique(self, field):
         return sorted(list({row[field] for row in self.rows if row[field]}))
@@ -144,81 +150,137 @@ class MasterData:
                 return row["price"]
         return None
 
-
-def generate_pdf(filename, info, items, grand_total, in_words, terms):
-    doc = SimpleDocTemplate(filename, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+# --- PDF Generator ---
+def generate_pdf(filename, info, items, net_total, discount_pct, discount_val, grand_total, in_words, terms):
+    doc = SimpleDocTemplate(filename, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     story = []
     styles = getSampleStyleSheet()
 
-    # Title & Header
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, leading=20,
-                                 textColor=pdf_colors.HexColor('#B71C1C'))
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=14, leading=16, textColor=pdf_colors.HexColor('#000000'), fontName='Helvetica-Bold')
+    sub_title_style = ParagraphStyle('SubTitleStyle', parent=styles['Normal'], fontSize=9, leading=11)
+    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontSize=9, leading=12)
+    bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontSize=9, leading=12, fontName='Helvetica-Bold')
+
+    # Header
     story.append(Paragraph(info['company_name'], title_style))
-    story.append(Paragraph(info['company_addr'], styles['Normal']))
+    story.append(Paragraph(info['company_addr'], sub_title_style))
+    story.append(Spacer(1, 15))
+
+    # Ref & Date block
+    meta_table = Table([
+        [Paragraph(f"<b>Ref:</b> {info['ref_no']}", normal_style), Paragraph(f"<b>Date:</b> {info['doc_date']}", ParagraphStyle('RightText', parent=normal_style, alignment=2))]
+    ], colWidths=[270, 270])
+    meta_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP')]))
+    story.append(meta_table)
     story.append(Spacer(1, 10))
 
-    meta_text = f"<b>Ref:</b> {info['ref_no']} | <b>Date:</b> {info['doc_date']}<br/><b>Client:</b> {info['client_name']}<br/><b>Subject:</b> {info['subject']}"
-    story.append(Paragraph(meta_text, styles['Normal']))
-    story.append(Spacer(1, 15))
+    # Client Info
+    story.append(Paragraph("<b>To</b>", normal_style))
+    story.append(Paragraph(info['client_name'], normal_style))
+    story.append(Paragraph(info['client_addr'], normal_style))
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(f"<b>Sub: {info['subject']}</b>", bold_style))
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("Dear Sir,<br/>Thank you for the opportunity to quote for your requirement. Our price offer is as follows:", normal_style))
+    story.append(Spacer(1, 10))
 
-    # Items Table
-    table_data = [["SL", "Type", "Size", "Color", "Unit", "Qty", "Price", "Total"]]
+    # Items Table Header
+    table_data = [["SL", "Product Specification", "Qty", "Unit", "Net Price (BDT)", "Total (BDT)"]]
     for idx, item in enumerate(items, 1):
         tot = item['qty'] * item['price']
+        spec = f"{item['type']} {item['size']}"
+        if item['color']:
+            spec += f" ({item['color']})"
         table_data.append([
-            str(idx), item['type'], item['size'], item['color'], item['unit'],
-            str(item['qty']), f"{item['price']:.2f}", f"{tot:.2f}"
+            str(idx), spec, str(item['qty']), item['unit'], f"{item['price']:,.2f}", f"{tot:,.2f}"
         ])
 
-    item_table = Table(table_data, colWidths=[25, 100, 70, 50, 45, 35, 65, 75])
+    item_table = Table(table_data, colWidths=[30, 230, 40, 50, 90, 100])
     item_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), pdf_colors.HexColor('#B71C1C')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), pdf_colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('BACKGROUND', (0, 0), (-1, 0), pdf_colors.HexColor('#E0E0E0')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), pdf_colors.black),
+        ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+        ('ALIGN', (2, 0), (3, -1), 'CENTER'),
+        ('ALIGN', (4, 0), (-1, -1), 'RIGHT'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
         ('GRID', (0, 0), (-1, -1), 0.5, pdf_colors.grey),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
     ]))
     story.append(item_table)
-    story.append(Spacer(1, 15))
 
-    # Total & Words
-    story.append(Paragraph(f"<b>Grand Total: {grand_total:,.2f} BDT</b>", styles['Heading2']))
-    story.append(Paragraph(f"<b>In Words:</b> {in_words}", styles['Italic']))
-    story.append(Spacer(1, 15))
+    # Totals Summary
+    tot_data = [
+        ["Net Total:", f"{net_total:,.2f}"],
+        [f"Special Discount ({discount_pct:.2f}%):", f"{discount_val:,.2f}"],
+        ["Grand Total:", f"{grand_total:,.2f}"]
+    ]
+    tot_table = Table(tot_data, colWidths=[440, 100])
+    tot_table.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (0, -1), 'RIGHT'),
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 0.5, pdf_colors.grey),
+    ]))
+    story.append(tot_table)
+    story.append(Spacer(1, 10))
 
-    # Terms
-    story.append(Paragraph("<b>Terms & Conditions:</b>", styles['Heading3']))
-    terms_data = [[t[0], t[1]] for t in terms]
-    terms_table = Table(terms_data, colWidths=[120, 350])
+    # In Word
+    story.append(Paragraph(f"<b>In Word:</b> {in_words}", normal_style))
+    story.append(Spacer(1, 12))
+
+    # Terms & Conditions
+    story.append(Paragraph("<b>Terms & Conditions</b>", bold_style))
+    terms_data = []
+    for idx, t in enumerate(terms, 1):
+        terms_data.append([str(idx), t[0], t[1]])
+
+    terms_table = Table(terms_data, colWidths=[20, 120, 400])
     terms_table.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('GRID', (0, 0), (-1, -1), 0.5, pdf_colors.lightgrey),
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('FONTNAME', (1, 0), (1, -1), 'Helvetica-Bold'),
     ]))
     story.append(terms_table)
+    story.append(Spacer(1, 15))
+
+    # Footer
+    story.append(Paragraph("Thanks & Best Regards,<br/><b>For ELCO WIRES AND CABLES LIMITED</b>", normal_style))
+    story.append(Spacer(1, 15))
+    
+    footer_text = "<b>Head office:</b> Islam Tower, 102, Shukrabad, Mirpur Road, Dhaka - 1207 | Phone: +88 02 222248708 | Email: info@elcocables.com<br/><b>Factory:</b> Shailat, Sreepur, Gazipur • <b>Web:</b> www.elcocables.com"
+    story.append(Paragraph(footer_text, ParagraphStyle('Footer', parent=sub_title_style, fontSize=7, leading=9)))
 
     doc.build(story)
-
 
 def main(page: ft.Page):
     page.title = "Cable Quotation Generator"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.scroll = ft.ScrollMode.AUTO
-    page.padding = 16
+    page.padding = 10
 
     master = MasterData()
-    master.load(MASTER_DATA_FILENAME)
+    load_error = master.load(MASTER_DATA_FILENAME)
 
     items = []
     terms = [list(t) for t in DEFAULT_TERMS]
     base_price = [None]
 
+    def show_snack(text):
+        snack = ft.SnackBar(ft.Text(text))
+        page.overlay.append(snack)
+        snack.open = True
+        page.update()
+
     # --- Inputs ---
     company_name = ft.TextField(label="Company Name", value="ELCO WIRES AND CABLES LIMITED", dense=True)
     company_addr = ft.TextField(label="Company Address", value="102, Shukrabad, Mirpur Road, Dhaka", dense=True)
-    ref_no = ft.TextField(label="Reference No", value=f"QT/{date.today().strftime('%d%m%Y')}", dense=True)
-    doc_date = ft.TextField(label="Date", value=date.today().strftime('%d/%m/%Y'), dense=True)
+    
+    ref_no = ft.TextField(label="Reference No", value=f"QT/{date.today().strftime('%d%m%Y')}", dense=True, width=170)
+    doc_date = ft.TextField(label="Date", value=date.today().strftime('%d/%m/%Y'), dense=True, width=150)
+    
     client_name = ft.TextField(label="Client Name", value="Client Company Limited", dense=True)
     client_addr = ft.TextField(label="Client Address", value="Client Address", dense=True)
     subject_line = ft.TextField(label="Subject", value="Price Offer for Electrical Cables.", dense=True)
@@ -253,14 +315,12 @@ def main(page: ft.Page):
         expand=True
     )
     qty_field = ft.TextField(label="Quantity", value="1", keyboard_type=ft.KeyboardType.NUMBER, dense=True, expand=True)
-    price_field = ft.TextField(label="Net Price (BDT)", value="0.00", keyboard_type=ft.KeyboardType.NUMBER, dense=True,
-                               expand=True)
+    price_field = ft.TextField(label="Net Price (BDT)", value="0.00", keyboard_type=ft.KeyboardType.NUMBER, dense=True, expand=True)
 
-    net_total_text = ft.Text("0.00", weight=ft.FontWeight.BOLD)
-    discount_field = ft.TextField(label="Special Discount (%)", value="0.0", keyboard_type=ft.KeyboardType.NUMBER,
-                                  dense=True, width=150)
-    grand_total_text = ft.Text("0.00", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.RED_700)
-    words_text = ft.Text("Zero Taka Only", italic=True)
+    net_total_text = ft.Text("0.00 BDT", weight=ft.FontWeight.BOLD)
+    discount_field = ft.TextField(label="Special Discount (%)", value="0.0", keyboard_type=ft.KeyboardType.NUMBER, dense=True, width=150)
+    grand_total_text = ft.Text("0.00 BDT", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.RED_700)
+    words_text = ft.Text("BDT- Zero Taka Only", italic=True)
 
     items_table = ft.DataTable(
         columns=[
@@ -281,6 +341,7 @@ def main(page: ft.Page):
         columns=[
             ft.DataColumn(ft.Text("Label")),
             ft.DataColumn(ft.Text("Detail")),
+            ft.DataColumn(ft.Text("Action")),
         ],
         rows=[]
     )
@@ -318,8 +379,6 @@ def main(page: ft.Page):
 
     def update_sizes_for_selected_type(selected_type):
         sizes = master.sizes_for_type(selected_type)
-
-        # অপশন ক্লিয়ার করে নতুন অপশন সেট করা
         size_dropdown.options.clear()
         for s in sizes:
             size_dropdown.options.append(ft.dropdown.Option(key=s, text=s))
@@ -330,7 +389,7 @@ def main(page: ft.Page):
             size_dropdown.value = None
 
         update_price()
-        page.update()  # পুরো পেজ আপডেট দিয়ে UI সিঙ্ক নিশ্চিত করা হলো
+        page.update()
 
     def on_type_change(e):
         selected_type = e.control.value
@@ -350,10 +409,6 @@ def main(page: ft.Page):
                 price_field.value = f"{base_price[0]:.2f}"
             page.update()
 
-    # Flet's Dropdown widget renamed its "value picked" event from
-    # on_change to on_select in recent versions (TextField still uses
-    # on_change, unaffected) - using on_change here silently did nothing,
-    # which is why choosing a Type/Size/Unit never updated anything.
     type_dropdown.on_select = on_type_change
     size_dropdown.on_select = on_size_change
     unit_dropdown.on_select = on_unit_change
@@ -394,25 +449,40 @@ def main(page: ft.Page):
 
     def refresh_terms_table():
         terms_table.rows.clear()
-        for term in terms:
+        for idx, term in enumerate(terms):
+            def label_changed(e, i=idx):
+                terms[i][0] = e.control.value
+
+            def detail_changed(e, i=idx):
+                terms[i][1] = e.control.value
+
+            def delete_term(e, index=idx):
+                terms.pop(index)
+                refresh_terms_table()
+
             terms_table.rows.append(
                 ft.DataRow(
                     cells=[
-                        ft.DataCell(ft.Text(term[0])),
-                        ft.DataCell(ft.Text(term[1])),
+                        ft.DataCell(
+                            ft.TextField(value=term[0], dense=True, width=140,
+                                         border=ft.InputBorder.UNDERLINE, on_change=label_changed)
+                        ),
+                        ft.DataCell(
+                            ft.TextField(value=term[1], dense=True, width=380, multiline=True,
+                                         min_lines=1, max_lines=3,
+                                         border=ft.InputBorder.UNDERLINE, on_change=detail_changed)
+                        ),
+                        ft.DataCell(
+                            ft.IconButton(icon=ft.Icons.DELETE, icon_color=ft.Colors.RED_400, on_click=delete_term)
+                        ),
                     ]
                 )
             )
         page.update()
 
-    def show_snack(text):
-        # page.open(snack) doesn't exist in this Flet version - the
-        # correct pattern is: add the SnackBar to page.overlay, set its
-        # own .open flag, then page.update().
-        snack = ft.SnackBar(ft.Text(text))
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
+    def add_term_click(e):
+        terms.append(["New Term", ""])
+        refresh_terms_table()
 
     def add_item_click(e):
         if not type_dropdown.value or not size_dropdown.value:
@@ -448,107 +518,128 @@ def main(page: ft.Page):
                 "ref_no": ref_no.value,
                 "doc_date": doc_date.value,
                 "client_name": client_name.value,
+                "client_addr": client_addr.value,
                 "subject": subject_line.value
             }
             net = sum(item["qty"] * item["price"] for item in items)
             disc_pct = float(discount_field.value or 0)
-            grand = max(net - (net * disc_pct / 100.0), 0.0)
+            disc_val = net * (disc_pct / 100.0)
+            grand = max(net - disc_val, 0.0)
 
-            output_pdf = "Cable_Quotation.pdf"
-            generate_pdf(output_pdf, info, items, grand, words_text.value, terms)
+            download_dir = "/storage/emulated/0/Download"
+            if not os.path.exists(download_dir):
+                download_dir = BASE_DIR
 
-            show_snack(f"PDF Exported Successfully as '{output_pdf}'!")
+            output_pdf = os.path.join(download_dir, "Cable_Quotation.pdf")
+            generate_pdf(output_pdf, info, items, net, disc_pct, disc_val, grand, words_text.value, terms)
+
+            show_snack(f"PDF saved to Download: {output_pdf}")
         except Exception as ex:
             show_snack(f"Error generating PDF: {str(ex)}")
 
     # --- UI Layout ---
     page.add(
-        ft.AppBar(
-            title=ft.Text("Cable Quotation App"),
-            bgcolor=ft.Colors.RED_800,
-            color=ft.Colors.WHITE
-        ),
-        ft.Card(
-            content=ft.Container(
-                content=ft.Column([
-                    ft.Text("Quotation Info", size=16, weight=ft.FontWeight.BOLD),
-                    company_name,
-                    company_addr,
-                    ft.Row([ref_no, doc_date]),
-                    client_name,
-                    client_addr,
-                    subject_line
-                ]),
-                padding=12
-            )
-        ),
-        ft.Card(
-            content=ft.Container(
-                content=ft.Column([
-                    ft.Text("Add Cable Item", size=16, weight=ft.FontWeight.BOLD),
-                    ft.Row([type_dropdown, size_dropdown]),
-                    ft.Row([color_dropdown, unit_dropdown]),
-                    ft.Row([qty_field, price_field]),
-                    ft.Button(
-                        "Add to Quotation",
-                        icon=ft.Icons.ADD,
-                        style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE),
-                        on_click=add_item_click
-                    )
-                ]),
-                padding=12
-            )
-        ),
-        ft.Card(
-            content=ft.Container(
-                content=ft.Column([
-                    ft.Text("Quotation Items", size=16, weight=ft.FontWeight.BOLD),
-                    ft.Row([items_table], scroll=ft.ScrollMode.ALWAYS)
-                ]),
-                padding=12
-            )
-        ),
-        ft.Card(
-            content=ft.Container(
-                content=ft.Column([
-                    ft.Text("Totals", size=16, weight=ft.FontWeight.BOLD),
-                    ft.Row([ft.Text("Net Total: "), net_total_text]),
-                    discount_field,
-                    ft.Row([ft.Text("Grand Total: "), grand_total_text]),
-                    ft.Row([ft.Text("In Words: "), words_text])
-                ]),
-                padding=12
-            )
-        ),
-        ft.Card(
-            content=ft.Container(
-                content=ft.Column([
-                    ft.Text("Terms & Conditions", size=16, weight=ft.FontWeight.BOLD),
-                    ft.Row([terms_table], scroll=ft.ScrollMode.ALWAYS)
-                ]),
-                padding=12
-            )
-        ),
         ft.Container(
-            content=ft.Button(
-                "Export PDF",
-                icon=ft.Icons.PICTURE_AS_PDF,
-                style=ft.ButtonStyle(bgcolor=ft.Colors.RED_800, color=ft.Colors.WHITE),
-                height=50,
-                on_click=export_pdf_click
-            ),
-            padding=ft.Padding.only(top=10, bottom=20),
-            alignment=ft.Alignment(0, 0)
+            content=ft.Column([
+                ft.Container(
+                    content=ft.Row([
+                        ft.Text("Cable Quotation App", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
+                    ], alignment=ft.MainAxisAlignment.CENTER),
+                    bgcolor=ft.Colors.RED_800,
+                    padding=12,
+                    border_radius=8,
+                    margin=ft.Margin(left=0, top=25, right=0, bottom=5) # Safe Margin object
+                ),
+                ft.Card(
+                    content=ft.Container(
+                        content=ft.Column([
+                            ft.Text("Quotation Info", size=16, weight=ft.FontWeight.BOLD),
+                            company_name,
+                            company_addr,
+                            ft.Row([ref_no, doc_date], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                            client_name,
+                            client_addr,
+                            subject_line
+                        ]),
+                        padding=12
+                    )
+                ),
+                ft.Card(
+                    content=ft.Container(
+                        content=ft.Column([
+                            ft.Text("Add Cable Item", size=16, weight=ft.FontWeight.BOLD),
+                            ft.Row([type_dropdown, size_dropdown]),
+                            ft.Row([color_dropdown, unit_dropdown]),
+                            ft.Row([qty_field, price_field]),
+                            ft.Button(
+                                "Add to Quotation",
+                                icon=ft.Icons.ADD,
+                                style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE),
+                                on_click=add_item_click
+                            )
+                        ]),
+                        padding=12
+                    )
+                ),
+                ft.Card(
+                    content=ft.Container(
+                        content=ft.Column([
+                            ft.Text("Quotation Items", size=16, weight=ft.FontWeight.BOLD),
+                            ft.Row([items_table], scroll=ft.ScrollMode.ALWAYS)
+                        ]),
+                        padding=12
+                    )
+                ),
+                ft.Card(
+                    content=ft.Container(
+                        content=ft.Column([
+                            ft.Text("Totals", size=16, weight=ft.FontWeight.BOLD),
+                            ft.Row([ft.Text("Net Total: "), net_total_text]),
+                            discount_field,
+                            ft.Row([ft.Text("Grand Total: "), grand_total_text]),
+                            ft.Row([ft.Text("In Words: "), words_text])
+                        ]),
+                        padding=12
+                    )
+                ),
+                ft.Card(
+                    content=ft.Container(
+                        content=ft.Column([
+                            ft.Text("Terms & Conditions", size=16, weight=ft.FontWeight.BOLD),
+                            ft.Row([terms_table], scroll=ft.ScrollMode.ALWAYS),
+                            ft.Button(
+                                "Add Term",
+                                icon=ft.Icons.ADD,
+                                style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE),
+                                on_click=add_term_click
+                            )
+                        ]),
+                        padding=12
+                    )
+                ),
+                ft.Container(
+                    content=ft.Button(
+                        "Export PDF",
+                        icon=ft.Icons.PICTURE_AS_PDF,
+                        style=ft.ButtonStyle(bgcolor=ft.Colors.RED_800, color=ft.Colors.WHITE),
+                        height=50,
+                        on_click=export_pdf_click
+                    ),
+                    padding=ft.Padding(left=0, top=10, right=0, bottom=20), # Safe Padding object
+                    alignment=ft.Alignment(0, 0)
+                )
+            ])
         )
     )
 
-    # --- Initial Selection ---
     if types_list:
         type_dropdown.value = types_list[0]
         update_sizes_for_selected_type(types_list[0])
 
     refresh_terms_table()
 
+    if load_error:
+        show_snack(f"⚠ {load_error}")
 
 if __name__ == "__main__":
-    ft.run(main)
+    ft.run(main=main, assets_dir="assets")
