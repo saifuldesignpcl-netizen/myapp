@@ -341,6 +341,7 @@ def main(page: ft.Page):
         columns=[
             ft.DataColumn(ft.Text("Label")),
             ft.DataColumn(ft.Text("Detail")),
+            ft.DataColumn(ft.Text("Action")),
         ],
         rows=[]
     )
@@ -448,16 +449,40 @@ def main(page: ft.Page):
 
     def refresh_terms_table():
         terms_table.rows.clear()
-        for term in terms:
+        for idx, term in enumerate(terms):
+            def label_changed(e, i=idx):
+                terms[i][0] = e.control.value
+
+            def detail_changed(e, i=idx):
+                terms[i][1] = e.control.value
+
+            def delete_term(e, index=idx):
+                terms.pop(index)
+                refresh_terms_table()
+
             terms_table.rows.append(
                 ft.DataRow(
                     cells=[
-                        ft.DataCell(ft.Text(term[0])),
-                        ft.DataCell(ft.Text(term[1])),
+                        ft.DataCell(
+                            ft.TextField(value=term[0], dense=True, width=140,
+                                         border=ft.InputBorder.UNDERLINE, on_change=label_changed)
+                        ),
+                        ft.DataCell(
+                            ft.TextField(value=term[1], dense=True, width=380, multiline=True,
+                                         min_lines=1, max_lines=3,
+                                         border=ft.InputBorder.UNDERLINE, on_change=detail_changed)
+                        ),
+                        ft.DataCell(
+                            ft.IconButton(icon=ft.Icons.DELETE, icon_color=ft.Colors.RED_400, on_click=delete_term)
+                        ),
                     ]
                 )
             )
         page.update()
+
+    def add_term_click(e):
+        terms.append(["New Term", ""])
+        refresh_terms_table()
 
     def add_item_click(e):
         if not type_dropdown.value or not size_dropdown.value:
@@ -581,7 +606,13 @@ def main(page: ft.Page):
                     content=ft.Container(
                         content=ft.Column([
                             ft.Text("Terms & Conditions", size=16, weight=ft.FontWeight.BOLD),
-                            ft.Row([terms_table], scroll=ft.ScrollMode.ALWAYS)
+                            ft.Row([terms_table], scroll=ft.ScrollMode.ALWAYS),
+                            ft.Button(
+                                "Add Term",
+                                icon=ft.Icons.ADD,
+                                style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE),
+                                on_click=add_term_click
+                            )
                         ]),
                         padding=12
                     )
